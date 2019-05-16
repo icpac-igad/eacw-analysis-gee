@@ -1,12 +1,61 @@
 import ee
 import logging
+ 
+def divide_geometry(feature):
+    """Divide feature geometry
+    Split a features polygon geometry in 4 using its' center point
+    @param {ee.Feature} A feature with a polygon geometry to split.
+    @return {ee.FeatureCollection} Collection with 4 features per input feature.
+    @example var aoi = Map.getBounds(); var fc = divideGeometry(aoi);
+    """
+    # Get coordinates of polygons bounds
+    g = feature.geometry()
+    l2 = g.bounds(1).coordinates().flatten()
+    c2 = g.centroid(1).coordinates().flatten()
+    # Create 4 cells dividing bounds at centroid
+    t0 = ee.Feature(ee.Geometry.Polygon(
+    [l2.get(0), l2.get(1),
+    c2.get(0), l2.get(1),
+    c2.get(0), c2.get(1),
+    l2.get(0), c2.get(1),
+    l2.get(0), l2.get(1),
+    ]), {"name": "t0"})
+    t1 = ee.Feature(ee.Geometry.Polygon(
+    [c2.get(0), l2.get(3),
+    l2.get(2), l2.get(3),
+    l2.get(2), c2.get(1),
+    c2.get(0), c2.get(1),
+    c2.get(0), l2.get(3),
+    ]), {"name": "t1"})
+    t2 = ee.Feature(ee.Geometry.Polygon(
+    [c2.get(0), c2.get(1),
+    l2.get(4), c2.get(1),
+    l2.get(4), l2.get(5),
+    c2.get(0), l2.get(5),
+    c2.get(0), c2.get(1),
+    ]), {"name": "t2"})
+    t3 = ee.Feature(ee.Geometry.Polygon(
+    [l2.get(0), c2.get(1),
+    c2.get(0), c2.get(1),
+    c2.get(0), l2.get(7),
+    l2.get(6), l2.get(7),
+    l2.get(0), c2.get(1),
+    ]), {"name": "t3"})
+    # Make a featureCollection
+    fc = ee.FeatureCollection([t0, t1, t2, t3,])
+    # Map intersection with feature and return cell name
+    def intersect(f):
+        return ee.Feature(feature.geometry().intersection(f.geometry(), 1), {"name": f.get("name")})
+    
+    return fc.map(intersect)
 
-def get_region(geom):
+def get_region(geom, divideGeom=False, nDivide=16):
     """Take a valid geojson object, iterate over all features in that object.
         Build up a list of EE Polygons, and finally return an EE Feature
         collection. New as of 19th Sep 2017 (needed to fix a bug where the old
         function ignored multipolys)
     """
+    logging.info('Getting region')
     polygons = []
     for feature in geom.get('features'):
         shape_type = feature.get('geometry').get('type')
@@ -17,14 +66,55 @@ def get_region(geom):
             polygons.append(ee.Geometry.Polygon(coordinates))
         else:
             pass
-    return ee.FeatureCollection(polygons)
+    fc = ee.FeatureCollection(polygons)
+    if divideGeom:
+        logging.info('Dividing geometries')
+        tmp = fc.map(divide_geometry).flatten()
+        tmp2 = tmp.map(divide_geometry).flatten()
+        tmp3 = tmp2.map(divide_geometry).flatten()
+        if nDivide == 4:
+            fc = tmp
+        if nDivide == 16:
+            fc = tmp2
+        if nDivide == 64:
+            fc = tm3
+        logging.info(f'Dividing geometries by: {fc.toList(1000).length().getInfo()}')    
+    return fc
 
+def sum_extent(im, fc, useMap=False, useBestEffort=False):
+    """Apply sum area reducer to each feature in a featureCollection
+    and return grand total"""
+    if type(fc) != ee.FeatureCollection:
+        raise HansenError(message='FeatureCollection required for sum_extent')
+    # Convert binary image to area (m2)
+    im = ee.Image(im).multiply(ee.Image.pixelArea())
+    out = im.reduceRegions(fc, ee.Reducer.sum(), 30)
+    logging.info('Applying reduceRegions')
+    def map_reduceRegion(f):
+            out = im.reduceRegion(**{
+                'reducer': ee.Reducer.sum(),
+                'geometry': f.geometry(),
+                'bestEffort': useBestEffort,
+                'maxPixels': 1e9,
+                'scale': 30,
+                'tileScale': 16
+                }).values().get(0)
+            return ee.Feature(None, {"sum": out})
+    if useMap:
+            output = fc.map(map_reduceRegion).aggregate_sum("sum")
+    else: 
+            output = out.aggregate_sum("sum")
+    return output    
 
 def squaremeters_to_ha(value):
     """Converts square meters to hectares, and gives val to 2 decimal places"""
     tmp = value/10000.
     return float('{0:4.2f}'.format(tmp))
 
+def ee_squaremeters_to_ha(value):
+    """Converts square meters to hectares, and gives val to 2 decimal places"""
+    tmp = ee.Number(value).divide(10000)
+    return ee.Number(tmp).format('%.2f')
 
 def get_thresh_image(thresh, asset_id):
     """Renames image bands using supplied threshold and returns image."""
