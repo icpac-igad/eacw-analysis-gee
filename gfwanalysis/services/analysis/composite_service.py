@@ -56,9 +56,14 @@ class CompositeService(object):
                                'tile_url': tmp_tile}
                 logging.error(f'[Composite Service]: result_dic {result_dic}')
             if get_dem:
-                result_dic['dem'] = ee.Image('JAXA/ALOS/AW3D30_V1_1').select('AVE').\
-                    clip(region).getThumbUrl({'region':region, 'dimensions':thumb_size,\
-                        'min':-479, 'max':8859.0})
+                logging.info("[Composite] DEM code initiated")
+                logging.info(f'At xxx Region is region:{type(region)}, geojson:{type(geojson)}')
+                #result_dic['dem'] = ee.Image('JAXA/ALOS/AW3D30_V1_1').select('AVE').\
+                #    clip(region).getThumbUrl({'region':region, 'dimensions':thumb_size,\
+                        ##'min':-479, 'max':8859.0})
+
+                dem = ee.Image('JAXA/ALOS/AW3D30_V1_1').select('AVE').clip(region)
+                result_dic['dem'] = dem.getThumbUrl({'dimensions': thumb_size, 'min':-479, 'max':8859.0})
             return result_dic
         except Exception as error:
             logging.error(str(error))
